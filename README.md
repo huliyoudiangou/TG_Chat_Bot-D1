@@ -50,9 +50,11 @@
 
 4.  进入您创建的 D1 数据库，点击 **浏览数据**。
 
-5.  点击 **D1的控制台界面，有一个执行步骤，将下面三段执行语句复制到执行窗口，点击执行即可，会弹出响应时间即为部署成功**：
+5.  数据库初始化 (SQL)： 请复制以下完整的 SQL 语句，粘贴到控制台执行窗口中并点击 执行 (Execute)：
 
--- ① users 表 (已修正：添加 first_message_sent 及默认值)
+-- 1. 初始化 users 表 (存储用户状态与配置)
+
+```
 CREATE TABLE IF NOT EXISTS users (
     user_id TEXT PRIMARY KEY NOT NULL,
     user_state TEXT NOT NULL DEFAULT 'new',
@@ -60,16 +62,22 @@ CREATE TABLE IF NOT EXISTS users (
     block_count INTEGER NOT NULL DEFAULT 0,
     first_message_sent INTEGER NOT NULL DEFAULT 0,
     topic_id TEXT,
-    user_info_json TEXT 
+    user_info_json TEXT
 );
+```
 
--- ② config 表
+-- 2. 初始化 config 表 (存储系统配置)
+
+```
 CREATE TABLE IF NOT EXISTS config (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+```
 
--- ③ messages 表
+-- 3. 初始化 messages 表 (用于编辑消息追踪)
+
+```
 CREATE TABLE IF NOT EXISTS messages (
     user_id TEXT NOT NULL,
     message_id TEXT NOT NULL,
@@ -77,9 +85,13 @@ CREATE TABLE IF NOT EXISTS messages (
     date INTEGER,
     PRIMARY KEY (user_id, message_id)
 );
+```
 
-PS：针对已经部署失败的用户（修复方案）
+⚠️ 故障修复 (针对旧版本用户)： 如果你之前已经部署过且遇到控制台无法使用的问题，请单独执行以下命令来修复数据库结构：
+
+```
 ALTER TABLE users ADD COLUMN first_message_sent INTEGER NOT NULL DEFAULT 0;
+```
 
 ### 步骤二：创建 Worker 服务并部署代码
 
