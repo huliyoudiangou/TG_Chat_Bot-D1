@@ -25,9 +25,10 @@ export default {
     async fetch(req, env, ctx) {
         ctx.waitUntil(dbInit(env));
         const url = new URL(req.url);
+        
         if (req.method === "GET") {
             if (url.pathname === "/verify") return handleVerifyPage(url, env);
-            if (url.pathname === "/") return new Response("Bot v3.25 OK", { status: 200 });
+            if (url.pathname === "/") return new Response("Bot v3.27 Ready", { status: 200 });
         }
         if (req.method === "POST") {
             if (url.pathname === "/submit_token") return handleTokenSubmit(req, env);
@@ -67,9 +68,9 @@ async function getUser(id, env) {
     let u = await sql(env, "SELECT * FROM users WHERE user_id = ?", id, 'first');
     if (!u) {
         try { await sql(env, "INSERT INTO users (user_id, user_state) VALUES (?, 'new')", id); } catch {}
-        u = await sql(env, "SELECT * FROM users WHERE user_id = ?", id, 'first') || { user_id: id, user_state: 'new', is_blocked: 0, block_count: 0, first_message_sent: 0, topic_id: null, user_info: {} };
+        u = await sql(env, "SELECT * FROM users WHERE user_id = ?", id, 'first') || { user_id: id, user_state: 'new', is_blocked: 0, block_count: 0, topic_id: null, user_info: {} };
     }
-    u.is_blocked = !!u.is_blocked; u.first_message_sent = !!u.first_message_sent;
+    u.is_blocked = !!u.is_blocked; 
     u.user_info = u.user_info_json ? JSON.parse(u.user_info_json) : {};
     return u;
 }
@@ -165,7 +166,7 @@ async function sendStart(id, env) {
 
 async function handleVerifiedMsg(msg, u, env) {
     const id = u.user_id, text = msg.text || "";
-    if (!u.first_message_sent && (!text || msg.photo || msg.video)) return api(env.BOT_TOKEN, "sendMessage", { chat_id: id, text: "⚠️ 首次需发送纯文本" });
+    // 移除首次必须纯文本的限制，解决并发冲突问题
 
     if (text) {
         const kws = await getJsonCfg('block_keywords', env);
@@ -209,25 +210,31 @@ async function relayToTopic(msg, u, env) {
     const uMeta = getUMeta(msg.from, u, msg.date), uid = u.user_id;
     let tid = u.topic_id;
 
+    // 话题创建锁，防止并发重复创建
     if (!tid) {
+        if (CACHE.locks[uid]) return; 
+        CACHE.locks[uid] = true;
         try {
             const t = await api(env.BOT_TOKEN, "createForumTopic", { chat_id: env.ADMIN_GROUP_ID, name: uMeta.topicName });
             tid = t.message_thread_id.toString();
             const card = await api(env.BOT_TOKEN, "sendMessage", { chat_id: env.ADMIN_GROUP_ID, message_thread_id: tid, text: uMeta.card, parse_mode: "HTML", reply_markup: getBtns(uid, u.is_blocked) });
             await updUser(uid, { topic_id: tid, user_info: { ...u.user_info, name: uMeta.name, username: uMeta.username, card_msg_id: card.message_id, join_date: msg.date } }, env);
             await api(env.BOT_TOKEN, "pinChatMessage", { chat_id: env.ADMIN_GROUP_ID, message_id: card.message_id });
-        } catch (e) { return api(env.BOT_TOKEN, "sendMessage", { chat_id: uid, text: "系统忙" }); }
+        } catch (e) { 
+            delete CACHE.locks[uid];
+            return api(env.BOT_TOKEN, "sendMessage", { chat_id: uid, text: "系统忙" }); 
+        }
+        delete CACHE.locks[uid];
     }
 
     try {
         await api(env.BOT_TOKEN, "copyMessage", { chat_id: env.ADMIN_GROUP_ID, from_chat_id: uid, message_id: msg.message_id, message_thread_id: tid });
         api(env.BOT_TOKEN, "sendMessage", { chat_id: uid, text: "✅ 已送达", reply_to_message_id: msg.message_id, disable_notification: true }).catch(()=>{});
-        if (!u.first_message_sent) await updUser(uid, { first_message_sent: 1 }, env);
         if (msg.text) await sql(env, "INSERT OR REPLACE INTO messages (user_id, message_id, text, date) VALUES (?,?,?,?)", [uid, msg.message_id, msg.text, msg.date]);
         await handleBackup(msg, uMeta, env);
         await handleInbox(env, msg, u, tid, uMeta);
     } catch (e) {
-        if (e.message.includes("thread")) { await updUser(uid, { topic_id: null }, env); api(env.BOT_TOKEN, "sendMessage", { chat_id: uid, text: "会话过期" }); }
+        if (e.message.includes("thread")) { await updUser(uid, { topic_id: null }, env); api(env.BOT_TOKEN, "sendMessage", { chat_id: uid, text: "会话过期，请重发" }); }
     }
 }
 
@@ -243,9 +250,9 @@ async function handleInbox(env, msg, u, tid, uMeta) {
     }
 
     const now = Date.now();
-    if (CACHE.user_locks[u.user_id] && now - CACHE.user_locks[u.user_id] < 5000) return;
+    if (CACHE.locks[`inbox_${u.user_id}`] && now - CACHE.locks[`inbox_${u.user_id}`] < 5000) return;
     if (now - (u.user_info.last_notify || 0) < 300000) return;
-    CACHE.user_locks[u.user_id] = now;
+    CACHE.locks[`inbox_${u.user_id}`] = now;
 
     if (u.user_info.inbox_msg_id) await api(env.BOT_TOKEN, "deleteMessage", { chat_id: env.ADMIN_GROUP_ID, message_id: u.user_info.inbox_msg_id }).catch(()=>{});
 
@@ -344,7 +351,7 @@ async function handleEdit(msg, env) {
     await api(env.BOT_TOKEN, "sendMessage", { chat_id: env.ADMIN_GROUP_ID, message_thread_id: u.topic_id, text: `✏️ <b>消息修改</b>\n前: ${escape(old?.text||"?")}\n后: ${escape(newTxt)}`, parse_mode: "HTML" });
 }
 
-// --- 7. 验证 (关键修复: AWAIT) ---
+// --- 7. 验证 (关键修复: await保证消息送达) ---
 async function handleVerifyPage(url, env) {
     const uid = url.searchParams.get('user_id');
     if (!uid || !env.TURNSTILE_SITE_KEY) return new Response("Miss Config", { status: 400 });
@@ -355,8 +362,8 @@ async function handleTokenSubmit(req, env) {
         const { token, userId } = await req.json();
         const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret: env.TURNSTILE_SECRET_KEY, response: token }) });
         if (!(await r.json()).success) throw new Error("Invalid");
-        // [修复] 必须await，否则worker终止导致消息发不出
         await updUser(userId, { user_state: "pending_verification" }, env);
+        // [修复] 加上await
         await api(env.BOT_TOKEN, "sendMessage", { chat_id: userId, text: "✅ 验证通过！\n请回答：\n" + await getCfg('verif_q', env) });
         return new Response(JSON.stringify({ success: true }));
     } catch { return new Response(JSON.stringify({ success: false }), { status: 400 }); }
@@ -364,14 +371,15 @@ async function handleTokenSubmit(req, env) {
 async function verifyAnswer(id, ans, env) {
     if (ans.trim() === (await getCfg('verif_a', env)).trim()) {
         await updUser(id, { user_state: "verified" }, env);
-        await api(env.BOT_TOKEN, "sendMessage", { chat_id: id, text: "✅ 验证完成！" });
+        // [优化] 验证成功后的提示语
+        await api(env.BOT_TOKEN, "sendMessage", { chat_id: id, text: "✅ 验证通过！\n现在您可以直接发送消息，我会帮您转达给管理员。" });
     } else await api(env.BOT_TOKEN, "sendMessage", { chat_id: id, text: "❌ 错误" });
 }
 
-// --- 8. 菜单与回调 ---
+// --- 8. 菜单与回调 (关键修复: 传入p3参数) ---
 async function handleCallback(cb, env) {
     const { data, message: msg, from } = cb;
-    const [act, p1, p2] = data.split(':');
+    const [act, p1, p2, p3] = data.split(':');
     
     if (act === 'inbox' && p1 === 'del') {
         await api(env.BOT_TOKEN, "deleteMessage", { chat_id: msg.chat.id, message_id: msg.message_id }).catch(()=>{});
@@ -387,7 +395,8 @@ async function handleCallback(cb, env) {
     if (act === 'config') {
         if (!(env.ADMIN_IDS||"").includes(from.id.toString())) return api(env.BOT_TOKEN, "answerCallbackQuery", { callback_query_id: cb.id, text: "无权", show_alert: true });
         await api(env.BOT_TOKEN, "answerCallbackQuery", { callback_query_id: cb.id });
-        return handleAdminConfig(msg.chat.id, msg.message_id, p1, p2, null, env);
+        // [修复] 传入 p3 作为 val
+        return handleAdminConfig(msg.chat.id, msg.message_id, p1, p2, p3, env);
     }
     
     if (msg.chat.id.toString() === env.ADMIN_GROUP_ID) { 
@@ -472,8 +481,9 @@ async function handleAdminInput(id, txt, state, env) {
             else list.push(txt);
             val = JSON.stringify(list); k = realK;
         } else if (k === 'authorized_admins') val = JSON.stringify(txt.split(/[,，]/));
-        await setCfg(k, val, env); await sql(env, "DELETE FROM config WHERE key=?", `admin_state:${id}`);
-        // [修复] 强制等待响应
+        
+        await setCfg(k, val, env);
+        await sql(env, "DELETE FROM config WHERE key=?", `admin_state:${id}`);
         await api(env.BOT_TOKEN, "sendMessage", { chat_id: id, text: `✅ ${k} 已更新:\n${val.substring(0,100)}` }); 
         await handleAdminConfig(id, null, 'menu', null, null, env);
     } catch (e) { api(env.BOT_TOKEN, "sendMessage", { chat_id: id, text: `❌ 失败: ${e.message}` }); }
