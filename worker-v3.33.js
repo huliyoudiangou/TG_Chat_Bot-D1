@@ -1,7 +1,8 @@
 /**
- * Telegram Bot Worker v3.32 (Stable Fixed Edition)
- * 修复: /start 点击无反应的问题 (修复了配置判断逻辑)
- * 功能: 人机验证、话题转发、双向私聊、黑名单、管理面板
+ * Telegram Bot Worker v3.33 (Fixed Edition)
+ * 修复: 设置备注导致昵称丢失的问题 (数据同步修复)
+ * 修复: /start 无反应问题
+ * 功能: 全功能保留
  */
 
 // --- 1. 静态配置 ---
@@ -33,7 +34,7 @@ export default {
         const url = new URL(req.url);
         if (req.method === "GET") {
             if (url.pathname === "/verify") return handleVerifyPage(url, env);
-            if (url.pathname === "/") return new Response("Bot v3.32 Active", { status: 200 });
+            if (url.pathname === "/") return new Response("Bot v3.33 Active", { status: 200 });
         }
         if (req.method === "POST") {
             if (url.pathname === "/submit_token") return handleTokenSubmit(req, env);
@@ -160,7 +161,6 @@ async function handlePrivate(msg, env, ctx) {
     if (state === 'verified') return handleVerifiedMsg(msg, u, env);
 }
 
-// --- 核心修复位置 ---
 async function sendStart(id, msg, env) {
     const u = await getUser(id, env);
     
@@ -170,7 +170,6 @@ async function sendStart(id, msg, env) {
     }
 
     const url = (env.WORKER_URL || "").replace(/\/$/, '');
-    // 修复：如果 URL 和 Key 都存在，则发送按钮；否则发送普通提示或错误
     if (url && env.TURNSTILE_SITE_KEY) {
         return api(env.BOT_TOKEN, "sendMessage", { 
             chat_id: id, 
@@ -227,13 +226,21 @@ async function relayToTopic(msg, u, env) {
     const uMeta = getUMeta(msg.from, u, msg.date), uid = u.user_id;
     let tid = u.topic_id;
 
+    // [修复点]：每次收到用户消息，都更新数据库中的昵称和用户名，确保备注时能取到最新数据
+    if (u.user_info.name !== uMeta.name || u.user_info.username !== uMeta.username) {
+        await updUser(uid, { user_info: { ...u.user_info, name: uMeta.name, username: uMeta.username } }, env);
+        // 更新本地对象，供后续逻辑使用
+        u.user_info.name = uMeta.name;
+        u.user_info.username = uMeta.username;
+    }
+
     if (!tid) {
         if (CACHE.user_locks[uid]) return;
         CACHE.user_locks[uid] = true;
         try {
             const t = await api(env.BOT_TOKEN, "createForumTopic", { chat_id: env.ADMIN_GROUP_ID, name: uMeta.topicName });
             tid = t.message_thread_id.toString();
-            await updUser(uid, { topic_id: tid, user_info: { ...u.user_info, name: uMeta.name, username: uMeta.username } }, env);
+            await updUser(uid, { topic_id: tid }, env);
             await sendInfoCardToTopic(env, u, msg.from, tid, msg.date);
         } catch (e) { 
             delete CACHE.user_locks[uid];
@@ -343,7 +350,13 @@ async function handleAdminReply(msg, env) {
             const u = await getUser(targetUid, env);
             u.user_info.note = msg.text;
             
-            const mockTgUser = { id: targetUid, username: u.user_info.username, first_name: u.user_info.name, last_name: "" };
+            // [修复点] 防止数据库没有名字时导致名片显示为空白
+            const mockTgUser = { 
+                id: targetUid, 
+                username: u.user_info.username || "", 
+                first_name: u.user_info.name || "(未获取)", 
+                last_name: "" 
+            };
             const newMeta = getUMeta(mockTgUser, u, u.user_info.join_date || (Date.now()/1000));
             
             if (u.topic_id) {
