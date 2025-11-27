@@ -141,9 +141,9 @@ https://api.telegram.org/bot<你的BOT_TOKEN>/setWebhook?url=<你的WORKER_URL>
 
 | 问题现象 | 可能原因 | 解决方案 |
 |----------|----------|----------|
-| `[说明1] 系统忙，请稍后再试` | 1. 机器人未获得足够权限<br>2. 群组ID错误<br>3. 群组未升级为超级群组<br>4. 未开启话题功能 | 1. 检查群组是否为超级群组<br>2. 确认群组设置中 **开启话题**<br>3. 通过 [@GroupHelpBot](https://t.me/GroupHelpBot) 检查群组状态 |
+| `[说明1] 系统忙，请稍后再试` | 1. 机器人未获得足够权限<br>2. 群组ID错误<br>3. 群组未升级为超级群组<br>4. 未开启话题功能 | 1. 检查群组是否为超级群组<br>2. 确认群组设置中 **开启话题**<br>3. 通过 [@raw_data_bot](https://t.me/raw_data_bot) 检查群组状态 |
 | `[说明2] 私聊BOT/start无反应` | `BOT_TOKEN` 配置错误 | 1. 重新从 @BotFather 获取 Token<br>2. 检查环境变量是否有拼写错误<br>3. 重新设置 webhook |
-| `[说明3] 回复消息无反应` | `ADMIN_IDS` 配置错误 | 1. 通过 [@userinfobot](https://t.me/userinfobot) 确认你的 TG ID<br>2. 检查环境变量中 ID 是否正确且无空格 |
+| `[说明3] 回复消息无反应` | `ADMIN_IDS` 配置错误 | 1. 通过 [@raw_data_bot](https://t.me/raw_data_bot) 确认你的 TG ID<br>2. 检查环境变量中 ID 是否正确且无空格 |
 | `[说明4] 点击配置菜单出现ERROR` | D1 数据库未绑定或变量名错误 | 1. 检查绑定变量名是否为 `TG_BOT_DB`（大小写敏感）<br>2. 确认数据库已正确创建 |
 | `[说明5] 点击配置菜单无反应` | D1 数据库配置错误 | 1. 重新绑定数据库<br>2. 检查 Worker 代码是否包含最新 D1 初始化逻辑 |
 
@@ -158,4 +158,4 @@ https://api.telegram.org/bot<你的BOT_TOKEN>/setWebhook?url=<你的WORKER_URL>
 > 遇到问题？请在 [Issues](https://github.com/huliyoudiangou/TG_Chat_Bot-D1/issues) 提交详细日志，我们将快速响应！  
 
 **🌟 给项目一个 Star 吧！您的支持是我们持续更新的动力！**  
-[![GitHub stars](https://img.shields.io/github/stars/your-repo/telegram-cf-worker?style=social)](https://github.com/huliyoudiangou/TG_Chat_Bot-D1/issues)
+[![GitHub stars](https://img.shields.io/github/stars/your-repo/telegram-cf-worker?style=social)](https://github.com/huliyoudiangou/TG_Chat_Bot-D1)
